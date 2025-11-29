@@ -1,5 +1,6 @@
 package com.example.notion_to_github.notion;
 
+import com.example.notion_to_github.constants.NotionObjectType;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -218,7 +219,7 @@ public class NotionClient {
                 return NotionObjectType.PAGE;
             }
         } catch (Exception ignored) {
-            // Not a page, try database
+            log.error("Error while resolving root type as page: {}", ignored.getMessage());
         }
 
         // Try as DATABASE
@@ -234,10 +235,11 @@ public class NotionClient {
                 return NotionObjectType.DATABASE;
             }
         } catch (Exception ignored) {
-            // Not a database
+            log.error("Error while resolving root type as database: {}", ignored.getMessage());
         }
 
-        throw new IllegalArgumentException("Invalid Notion root ID: neither page nor database: " + rootId);
+        log.error("Invalid Notion root ID: neither page nor database: " + rootId);
+        return null;
     }
 
 
@@ -292,11 +294,6 @@ public class NotionClient {
             return base;
         }
         return base + "/" + leaf;
-    }
-
-    private enum NotionObjectType {
-        PAGE,
-        DATABASE
     }
 
     private record PageReference(String id, String title) { }
