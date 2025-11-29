@@ -55,6 +55,7 @@ public class GitHubClient {
                 sha = existing.get("sha").asText();
             }
         } catch (Exception ignored) {
+            // No-op: the file does not exist yet.
             log.info("File does not exist in GitHub yet: {}", document.path());
         }
 
