@@ -3,6 +3,7 @@ package com.example.notion_to_github.github;
 import com.example.notion_to_github.notion.NotionDocument;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -15,6 +16,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class GitHubClient {
@@ -32,6 +34,7 @@ public class GitHubClient {
     private String branch;
 
     public void upsertMarkdownFiles(List<NotionDocument> documents) {
+        log.info("Upserting {} documents to GitHub repository {}/{} on branch {}", documents.size(), owner, repo, branch);
         for (NotionDocument document : documents) {
             upsertSingleDocument(document);
         }
@@ -53,6 +56,7 @@ public class GitHubClient {
             }
         } catch (Exception ignored) {
             // No-op: the file does not exist yet.
+            log.info("File does not exist in GitHub yet: {}", document.path());
         }
 
         Map<String, Object> body = new HashMap<>();

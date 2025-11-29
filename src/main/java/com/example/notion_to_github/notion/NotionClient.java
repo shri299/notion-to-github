@@ -63,17 +63,20 @@ public class NotionClient {
         List<NotionDocument> documents = new ArrayList<>();
 
         if (response != null && response.has("results")) {
+            log.info("we have for some response");
             for (JsonNode item : response.get("results")) {
                 String id = item.path("id").asText();
                 String pagePrefix = basePath.isEmpty() ? "" : basePath;
                 documents.addAll(fetchPageAndChildren(id, pagePrefix));
+                log.info(documents.toString());
+                break;
             }
         }
 
         return documents;
     }
 
-    private List<NotionDocument> fetchPageAndChildren(String pageId, String parentDirectory) {
+    private List<NotionDocument> fetchPageAndChildren(String pageId, String parentPathPrefix) {
         String title = fetchPageTitle(pageId);
         String sanitizedTitle = sanitizeFileName(title);
 
@@ -81,13 +84,14 @@ public class NotionClient {
         List<PageReference> childPages = new ArrayList<>();
         fetchBlocksRecursively(pageId, lines, childPages, 0);
 
-        String currentDirectory = combinePaths(parentDirectory, sanitizedTitle);
-
         List<NotionDocument> documents = new ArrayList<>();
-        documents.add(new NotionDocument(combinePaths(currentDirectory, sanitizedTitle + ".md"), String.join("\n", lines)));
+        documents.add(new NotionDocument(combinePaths(parentPathPrefix, sanitizedTitle + ".md"), String.join("\n", lines)));
 
+        String childPrefix = combinePaths(parentPathPrefix, sanitizedTitle);
         for (PageReference child : childPages) {
-            documents.addAll(fetchPageAndChildren(child.id(), currentDirectory));
+            log.info("got some child");
+            documents.addAll(fetchPageAndChildren(child.id(), childPrefix));
+            break;
         }
 
         return documents;

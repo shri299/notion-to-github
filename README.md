@@ -1,3 +1,3 @@
 # Notion to GitHub Sync
 
-This project syncs Notion pages or databases to GitHub. The sync traverses nested pages so each page becomes its own Markdown file in a directory structure that mirrors the Notion hierarchy. Each page gets its own folder named after the page title, and the Markdown for that page lives inside the folder (e.g., `System_Design/System_Design.md`, `System_Design/HLD/HLD.md`). Database exports follow the same pattern, using the database name as the top-level folder before drilling into each contained page. Work is currently maintained on the `generic_sync` branch so the main branch stays clean for production-ready code.
+This project syncs Notion pages or databases to GitHub. The sync traverses nested pages so each page becomes its own Markdown file in a directory structure that mirrors the Notion hierarchy. Work is currently maintained on the `generic_sync` branch so the main branch stays clean for production-ready code.
