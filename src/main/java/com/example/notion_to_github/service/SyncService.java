@@ -1,9 +1,11 @@
 package com.example.notion_to_github.service;
 import com.example.notion_to_github.github.*;
 import com.example.notion_to_github.notion.NotionClient;
+import com.example.notion_to_github.notion.NotionDocument;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -15,13 +17,10 @@ public class SyncService {
     private GitHubClient githubClient;
 
     public String syncNotionPageToGithub() {
-        // 1. Fetch page content from Notion as markdown
-        String markdown = notionClient.fetchPageAsMarkdown();
+        List<NotionDocument> documents = notionClient.fetchDocuments();
+        githubClient.upsertMarkdownFiles(documents);
 
-        // 2. Push markdown to GitHub
-        githubClient.upsertMarkdownFile(markdown);
-
-        return "Synced successfully";
+        return "Synced " + documents.size() + " file(s)";
     }
 }
 
