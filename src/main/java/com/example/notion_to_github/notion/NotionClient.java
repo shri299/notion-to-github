@@ -1,9 +1,7 @@
 package com.example.notion_to_github.notion;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -11,78 +9,95 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 
-@Slf4j
 @Component
 @RequiredArgsConstructor
 public class NotionClient {
-
-    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Autowired
     @Qualifier("notionWebClient")
     private WebClient notionClient;
 
-    // IMPORTANT: This is a DATABASE ID, not a page ID.
+    /**
+     * This can be either a database ID or a page ID and serves as the root for exporting.
+     */
     @Value("${notion.page-id}")
-    private String databaseId;
+    private String rootId;
 
     /**
-     * Entry point:
-     * Fetch ALL pages inside the database and convert each page to markdown.
+     * Entry point: fetch a tree of pages beneath the provided root and convert them to Markdown
+     * with paths that mirror the Notion hierarchy.
      */
-    public String fetchPageAsMarkdown() {
+    public List<NotionDocument> fetchDocuments() {
+        NotionObjectType objectType = resolveRootType();
 
-        List<String> pageIds = fetchPageIdsInDatabase(databaseId);
-        System.out.println("The number pages fetched: {}" + pageIds.size());
-        StringBuilder md = new StringBuilder();
-        int i=0;
-        for (String pid : pageIds) {
-            System.out.println("Processing fro page ID: {}" + pid);
-            md.append("# Page\n\n");
-
-            List<String> lines = new ArrayList<>();
-            fetchBlocksRecursively(pid, lines, 0);
-
-            md.append(String.join("\n", lines));
-            md.append("\n\n---\n\n"); // separator between pages
-            i++;
-            if (i==6) break; // For testing, limit to first 3 pages
+        if (objectType == NotionObjectType.DATABASE) {
+            return fetchDatabaseDocuments(rootId);
         }
 
-        return md.toString();
+        return fetchPageAndChildren(rootId, "");
     }
 
     /**
      * STEP 1:
      * Query database → return child page IDs inside the DB.
      */
-    private List<String> fetchPageIdsInDatabase(String dbId) {
-
-        JsonNode response = notionClient.post()
-                .uri("/databases/" + dbId + "/query")
+    private List<NotionDocument> fetchDatabaseDocuments(String databaseId) {
+        JsonNode db = notionClient.get()
+                .uri("/databases/" + databaseId)
                 .retrieve()
                 .bodyToMono(JsonNode.class)
                 .block();
 
-        List<String> pageIds = new ArrayList<>();
+        String dbName = extractTitle(db == null ? null : db.path("title"), "database");
+        String basePath = sanitizeFileName(dbName);
+
+        JsonNode response = notionClient.post()
+                .uri("/databases/" + databaseId + "/query")
+                .retrieve()
+                .bodyToMono(JsonNode.class)
+                .block();
+
+        List<NotionDocument> documents = new ArrayList<>();
 
         if (response != null && response.has("results")) {
             for (JsonNode item : response.get("results")) {
-                String id = item.get("id").asText();
-                pageIds.add(id);
+                String id = item.path("id").asText();
+                String pagePrefix = basePath.isEmpty() ? "" : basePath;
+                documents.addAll(fetchPageAndChildren(id, pagePrefix));
             }
         }
 
-        return pageIds;
+        return documents;
+    }
+
+    private List<NotionDocument> fetchPageAndChildren(String pageId, String parentDirectory) {
+        String title = fetchPageTitle(pageId);
+        String sanitizedTitle = sanitizeFileName(title);
+
+        List<String> lines = new ArrayList<>();
+        List<PageReference> childPages = new ArrayList<>();
+        fetchBlocksRecursively(pageId, lines, childPages, 0);
+
+        String currentDirectory = combinePaths(parentDirectory, sanitizedTitle);
+
+        List<NotionDocument> documents = new ArrayList<>();
+        documents.add(new NotionDocument(combinePaths(currentDirectory, sanitizedTitle + ".md"), String.join("\n", lines)));
+
+        for (PageReference child : childPages) {
+            documents.addAll(fetchPageAndChildren(child.id(), currentDirectory));
+        }
+
+        return documents;
     }
 
     /**
      * STEP 2:
-     * For a given page, recursively fetch content blocks.
+     * For a given page, recursively fetch content blocks while tracking child pages.
      */
-    private void fetchBlocksRecursively(String blockId, List<String> lines, int depth) {
+    private void fetchBlocksRecursively(String blockId, List<String> lines, List<PageReference> childPages, int depth) {
 
         String url = "/blocks/" + blockId + "/children?page_size=100";
 
@@ -101,11 +116,18 @@ public class NotionClient {
             String type = block.get("type").asText();
             String id = block.get("id").asText();
 
+            if ("child_page".equals(type)) {
+                String title = block.path("child_page").path("title").asText("Untitled");
+                childPages.add(new PageReference(id, title));
+                lines.add("  ".repeat(Math.max(0, depth)) + "- " + title + " (sub-page)");
+                continue;
+            }
+
             List<String> blockLines = convertBlockToMarkdown(block, type, depth);
             lines.addAll(blockLines);
 
             if (block.path("has_children").asBoolean(false)) {
-                fetchBlocksRecursively(id, lines, depth + 1);
+                fetchBlocksRecursively(id, lines, childPages, depth + 1);
             }
         }
     }
@@ -174,4 +196,82 @@ public class NotionClient {
         }
         return sb.toString().trim();
     }
+
+    private NotionObjectType resolveRootType() {
+        try {
+            JsonNode db = notionClient.get()
+                    .uri("/databases/" + rootId)
+                    .retrieve()
+                    .bodyToMono(JsonNode.class)
+                    .block();
+
+            if (db != null && "database".equalsIgnoreCase(db.path("object").asText())) {
+                return NotionObjectType.DATABASE;
+            }
+        } catch (Exception ignored) {
+            // If database lookup fails, fall back to page lookup.
+        }
+
+        return NotionObjectType.PAGE;
+    }
+
+    private String fetchPageTitle(String pageId) {
+        JsonNode page = notionClient.get()
+                .uri("/pages/" + pageId)
+                .retrieve()
+                .bodyToMono(JsonNode.class)
+                .block();
+
+        return extractTitle(page == null ? null : page.path("properties"), "page");
+    }
+
+    private String extractTitle(JsonNode node, String fallback) {
+        if (node == null) {
+            return fallback;
+        }
+
+        if (node.isArray()) {
+            for (JsonNode titleNode : node) {
+                String text = richTextToPlain(titleNode.path("title"));
+                if (!text.isEmpty()) {
+                    return text;
+                }
+            }
+        }
+
+        Iterator<String> fieldNames = node.fieldNames();
+        while (fieldNames.hasNext()) {
+            String field = fieldNames.next();
+            JsonNode property = node.path(field);
+            if ("title".equals(property.path("type").asText())) {
+                String text = richTextToPlain(property.path("title"));
+                if (!text.isEmpty()) {
+                    return text;
+                }
+            }
+        }
+
+        return fallback;
+    }
+
+    private String sanitizeFileName(String input) {
+        return input == null ? "" : input.trim().replaceAll("\\s+", "_").replaceAll("[^A-Za-z0-9_.-]", "-");
+    }
+
+    private String combinePaths(String base, String leaf) {
+        if (base == null || base.isEmpty()) {
+            return leaf;
+        }
+        if (leaf == null || leaf.isEmpty()) {
+            return base;
+        }
+        return base + "/" + leaf;
+    }
+
+    private enum NotionObjectType {
+        PAGE,
+        DATABASE
+    }
+
+    private record PageReference(String id, String title) { }
 }

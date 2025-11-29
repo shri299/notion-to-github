@@ -1,17 +1,18 @@
 package com.example.notion_to_github.github;
 
+import com.example.notion_to_github.notion.NotionDocument;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
-import java.util.Base64;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 @Component
@@ -20,7 +21,6 @@ public class GitHubClient {
 
     @Autowired
     private WebClient githubClient;
-    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${github.owner}")
     private String owner;
@@ -31,16 +31,15 @@ public class GitHubClient {
     @Value("${github.branch}")
     private String branch;
 
-    @Value("${github.file-path}")
-    private String filePath;
+    public void upsertMarkdownFiles(List<NotionDocument> documents) {
+        for (NotionDocument document : documents) {
+            upsertSingleDocument(document);
+        }
+    }
 
-    /**
-     * Create or update a file in the repo with the given markdown content.
-     */
-    public void upsertMarkdownFile(String markdownContent) {
-        String path = "/repos/" + owner + "/" + repo + "/contents/" + filePath;
+    private void upsertSingleDocument(NotionDocument document) {
+        String path = "/repos/" + owner + "/" + repo + "/contents/" + document.path();
 
-        // 1. Try to get existing file to know if we need 'sha' (update)
         String sha = null;
         try {
             JsonNode existing = githubClient.get()
@@ -52,14 +51,13 @@ public class GitHubClient {
             if (existing != null && existing.has("sha")) {
                 sha = existing.get("sha").asText();
             }
-        } catch (Exception ex) {
-            // 404 or any error -> treat as new file, so sha remains null
+        } catch (Exception ignored) {
+            // No-op: the file does not exist yet.
         }
 
-        // 2. Prepare request body
         Map<String, Object> body = new HashMap<>();
-        body.put("message", "Sync Notion page at " + Instant.now());
-        body.put("content", Base64.getEncoder().encodeToString(markdownContent.getBytes(StandardCharsets.UTF_8)));
+        body.put("message", "Sync Notion page at " + Instant.now() + " -> " + document.path());
+        body.put("content", Base64.getEncoder().encodeToString(document.markdownContent().getBytes(StandardCharsets.UTF_8)));
         body.put("branch", branch);
 
         if (sha != null) {
@@ -71,7 +69,7 @@ public class GitHubClient {
                 .bodyValue(body)
                 .retrieve()
                 .bodyToMono(JsonNode.class)
-                .block(); // simple blocking
+                .block();
     }
 }
 
