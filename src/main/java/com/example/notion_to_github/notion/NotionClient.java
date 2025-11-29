@@ -2,6 +2,7 @@ package com.example.notion_to_github.notion;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class NotionClient {
@@ -63,10 +65,13 @@ public class NotionClient {
         List<NotionDocument> documents = new ArrayList<>();
 
         if (response != null && response.has("results")) {
+            log.info("we have for some response");
             for (JsonNode item : response.get("results")) {
                 String id = item.path("id").asText();
                 String pagePrefix = basePath.isEmpty() ? "" : basePath;
                 documents.addAll(fetchPageAndChildren(id, pagePrefix));
+                log.info(documents.toString());
+                break;
             }
         }
 
@@ -86,7 +91,9 @@ public class NotionClient {
 
         String childPrefix = combinePaths(parentPathPrefix, sanitizedTitle);
         for (PageReference child : childPages) {
+            log.info("got some child");
             documents.addAll(fetchPageAndChildren(child.id(), childPrefix));
+            break;
         }
 
         return documents;
