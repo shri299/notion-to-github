@@ -204,6 +204,24 @@ public class NotionClient {
     }
 
     private NotionObjectType resolveRootType() {
+
+        // Try as PAGE first
+        try {
+            JsonNode page = notionClient.get()
+                    .uri("/pages/" + rootId)
+                    .retrieve()
+                    .bodyToMono(JsonNode.class)
+                    .block();
+
+            if (page != null && "page".equalsIgnoreCase(page.path("object").asText())) {
+                log.info("Incoming id is a page!!!");
+                return NotionObjectType.PAGE;
+            }
+        } catch (Exception ignored) {
+            // Not a page, try database
+        }
+
+        // Try as DATABASE
         try {
             JsonNode db = notionClient.get()
                     .uri("/databases/" + rootId)
@@ -212,14 +230,16 @@ public class NotionClient {
                     .block();
 
             if (db != null && "database".equalsIgnoreCase(db.path("object").asText())) {
+                log.info("Incoming id is a database!!!");
                 return NotionObjectType.DATABASE;
             }
         } catch (Exception ignored) {
-            // If database lookup fails, fall back to page lookup.
+            // Not a database
         }
 
-        return NotionObjectType.PAGE;
+        throw new IllegalArgumentException("Invalid Notion root ID: neither page nor database: " + rootId);
     }
+
 
     private String fetchPageTitle(String pageId) {
         JsonNode page = notionClient.get()
