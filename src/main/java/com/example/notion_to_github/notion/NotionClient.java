@@ -260,7 +260,7 @@ public class NotionClient {
 
         if (node.isArray()) {
             for (JsonNode titleNode : node) {
-                String text = richTextToPlain(titleNode.path("title"));
+                String text = titleNode.path("plain_text").asText();
                 if (!text.isEmpty()) {
                     return text;
                 }
