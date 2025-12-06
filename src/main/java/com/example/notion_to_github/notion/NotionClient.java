@@ -71,8 +71,6 @@ public class NotionClient {
                 String id = item.path("id").asText();
                 String pagePrefix = basePath.isEmpty() ? "" : basePath;
                 documents.addAll(fetchPageAndChildren(id, pagePrefix));
-                log.info(documents.toString());
-                break;
             }
         }
 
@@ -106,38 +104,57 @@ public class NotionClient {
      */
     private void fetchBlocksRecursively(String blockId, List<String> lines, List<PageReference> childPages, int depth) {
 
-        String url = "/blocks/" + blockId + "/children?page_size=100";
+        String cursor = null;
 
-        JsonNode response = notionClient.get()
-                .uri(url)
-                .retrieve()
-                .bodyToMono(JsonNode.class)
-                .block();
-
-        if (response == null || !response.has("results")) {
-            return;
-        }
-
-        for (JsonNode block : response.get("results")) {
-
-            String type = block.get("type").asText();
-            String id = block.get("id").asText();
-
-            if ("child_page".equals(type)) {
-                String title = block.path("child_page").path("title").asText("Untitled");
-                childPages.add(new PageReference(id, title));
-                lines.add("  ".repeat(Math.max(0, depth)) + "- " + title + " (sub-page)");
-                continue;
+        while (true) {
+            // Build paginated URL
+            String url = "/blocks/" + blockId + "/children?page_size=100";
+            if (cursor != null) {
+                url += "&start_cursor=" + cursor;
             }
 
-            List<String> blockLines = convertBlockToMarkdown(block, type, depth);
-            lines.addAll(blockLines);
+            JsonNode response = notionClient.get()
+                    .uri(url)
+                    .retrieve()
+                    .bodyToMono(JsonNode.class)
+                    .block();
 
-            if (block.path("has_children").asBoolean(false)) {
-                fetchBlocksRecursively(id, lines, childPages, depth + 1);
+            if (response == null || !response.has("results")) {
+                return;
+            }
+
+            for (JsonNode block : response.get("results")) {
+
+                String type = block.get("type").asText();
+                String id = block.get("id").asText();
+
+                // Handle child page
+                if ("child_page".equals(type)) {
+                    String title = block.path("child_page").path("title").asText("Untitled");
+                    childPages.add(new PageReference(id, title));
+                    lines.add("  ".repeat(Math.max(0, depth)) + "- " + title + " (sub-page)");
+                    continue;
+                }
+
+                // Convert block to markdown
+                List<String> blockLines = convertBlockToMarkdown(block, type, depth);
+                lines.addAll(blockLines);
+
+                // Recursively fetch child blocks
+                if (block.path("has_children").asBoolean(false)) {
+                    fetchBlocksRecursively(id, lines, childPages, depth + 1);
+                }
+            }
+
+            // Pagination check
+            if (response.path("has_more").asBoolean(false)) {
+                cursor = response.path("next_cursor").asText();
+            } else {
+                break; // no more pages → stop loop
             }
         }
     }
+
 
     /**
      * Block → Markdown converter
