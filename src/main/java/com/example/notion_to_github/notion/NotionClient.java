@@ -1,5 +1,6 @@
 package com.example.notion_to_github.notion;
 
+import com.example.notion_to_github.constants.NotionObjectType;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -70,8 +71,6 @@ public class NotionClient {
                 String id = item.path("id").asText();
                 String pagePrefix = basePath.isEmpty() ? "" : basePath;
                 documents.addAll(fetchPageAndChildren(id, pagePrefix));
-                log.info(documents.toString());
-                break;
             }
         }
 
@@ -105,38 +104,57 @@ public class NotionClient {
      */
     private void fetchBlocksRecursively(String blockId, List<String> lines, List<PageReference> childPages, int depth) {
 
-        String url = "/blocks/" + blockId + "/children?page_size=100";
+        String cursor = null;
 
-        JsonNode response = notionClient.get()
-                .uri(url)
-                .retrieve()
-                .bodyToMono(JsonNode.class)
-                .block();
-
-        if (response == null || !response.has("results")) {
-            return;
-        }
-
-        for (JsonNode block : response.get("results")) {
-
-            String type = block.get("type").asText();
-            String id = block.get("id").asText();
-
-            if ("child_page".equals(type)) {
-                String title = block.path("child_page").path("title").asText("Untitled");
-                childPages.add(new PageReference(id, title));
-                lines.add("  ".repeat(Math.max(0, depth)) + "- " + title + " (sub-page)");
-                continue;
+        while (true) {
+            // Build paginated URL
+            String url = "/blocks/" + blockId + "/children?page_size=100";
+            if (cursor != null) {
+                url += "&start_cursor=" + cursor;
             }
 
-            List<String> blockLines = convertBlockToMarkdown(block, type, depth);
-            lines.addAll(blockLines);
+            JsonNode response = notionClient.get()
+                    .uri(url)
+                    .retrieve()
+                    .bodyToMono(JsonNode.class)
+                    .block();
 
-            if (block.path("has_children").asBoolean(false)) {
-                fetchBlocksRecursively(id, lines, childPages, depth + 1);
+            if (response == null || !response.has("results")) {
+                return;
+            }
+
+            for (JsonNode block : response.get("results")) {
+
+                String type = block.get("type").asText();
+                String id = block.get("id").asText();
+
+                // Handle child page
+                if ("child_page".equals(type)) {
+                    String title = block.path("child_page").path("title").asText("Untitled");
+                    childPages.add(new PageReference(id, title));
+                    lines.add("  ".repeat(Math.max(0, depth)) + "- " + title + " (sub-page)");
+                    continue;
+                }
+
+                // Convert block to markdown
+                List<String> blockLines = convertBlockToMarkdown(block, type, depth);
+                lines.addAll(blockLines);
+
+                // Recursively fetch child blocks
+                if (block.path("has_children").asBoolean(false)) {
+                    fetchBlocksRecursively(id, lines, childPages, depth + 1);
+                }
+            }
+
+            // Pagination check
+            if (response.path("has_more").asBoolean(false)) {
+                cursor = response.path("next_cursor").asText();
+            } else {
+                break; // no more pages → stop loop
             }
         }
     }
+
 
     /**
      * Block → Markdown converter
@@ -204,6 +222,24 @@ public class NotionClient {
     }
 
     private NotionObjectType resolveRootType() {
+
+        // Try as PAGE first
+        try {
+            JsonNode page = notionClient.get()
+                    .uri("/pages/" + rootId)
+                    .retrieve()
+                    .bodyToMono(JsonNode.class)
+                    .block();
+
+            if (page != null && "page".equalsIgnoreCase(page.path("object").asText())) {
+                log.info("Incoming id is a page!!!");
+                return NotionObjectType.PAGE;
+            }
+        } catch (Exception ignored) {
+            log.error("Error while resolving root type as page: {}", ignored.getMessage());
+        }
+
+        // Try as DATABASE
         try {
             JsonNode db = notionClient.get()
                     .uri("/databases/" + rootId)
@@ -212,14 +248,17 @@ public class NotionClient {
                     .block();
 
             if (db != null && "database".equalsIgnoreCase(db.path("object").asText())) {
+                log.info("Incoming id is a database!!!");
                 return NotionObjectType.DATABASE;
             }
         } catch (Exception ignored) {
-            // If database lookup fails, fall back to page lookup.
+            log.error("Error while resolving root type as database: {}", ignored.getMessage());
         }
 
-        return NotionObjectType.PAGE;
+        log.error("Invalid Notion root ID: neither page nor database: " + rootId);
+        return null;
     }
+
 
     private String fetchPageTitle(String pageId) {
         JsonNode page = notionClient.get()
@@ -238,7 +277,7 @@ public class NotionClient {
 
         if (node.isArray()) {
             for (JsonNode titleNode : node) {
-                String text = richTextToPlain(titleNode.path("title"));
+                String text = titleNode.path("plain_text").asText();
                 if (!text.isEmpty()) {
                     return text;
                 }
@@ -272,11 +311,6 @@ public class NotionClient {
             return base;
         }
         return base + "/" + leaf;
-    }
-
-    private enum NotionObjectType {
-        PAGE,
-        DATABASE
     }
 
     private record PageReference(String id, String title) { }
